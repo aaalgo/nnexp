@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import cv2
 import h5py
+import time
 from fuel.datasets.hdf5 import H5PYDataset
 from fuel.schemes import ShuffledScheme, SequentialScheme
 from fuel.streams import DataStream
@@ -24,8 +25,10 @@ class DataH5PyStreamer:
             fold_names = set([x[0] for x in f.attrs['split'] if 'fold-' in x[0]])
             folds = len(fold_names)
             shape = f['images'].shape
+            label_shape = f['labels'].shape
             logging.info("folds found in {} is {}".format(path, fold_names))
-            logging.info("shape of {} is {}".format(path, shape))
+            logging.info("image shape of {} is {}".format(path, shape))
+            logging.info("label shape of {} is {}".format(path, label_shape))
             self.shape = (batch,) + shape[1:]
         #sys.exit(0)
         tr_set = ['fold-{}'.format(i) for i in range(folds) if i != fold]
@@ -53,11 +56,11 @@ class DataH5PyStreamer:
     pass
 
 def save_params(model, fn):
+    if isinstance(model, list):
+        param_vals = model
+    else:
+        param_vals = lasagne.layers.get_all_param_values(model)
     if 'npz' in fn:
-        if isinstance(model, list):
-            param_vals = model
-        else:
-            param_vals = nn.layers.get_all_param_values(model)
         np.savez(fn, *param_vals)
     else:
         with open(fn, 'w') as wr:
@@ -67,13 +70,14 @@ def save_params(model, fn):
 def run_epoch (stream, func, maxit, shape):
     err = None
     n = 0
-    for imb in tqdm(stream.get_epoch_iterator(), maxit):
+    #print maxit
+    for imb in tqdm(stream.get_epoch_iterator(), total=maxit):
         if imb[0].shape != shape:
             continue
         #imb = tr_transform(imb)
         if not isinstance(imb, tuple):
             imb = (imb,)
-        e = func(*imb)
+        e = np.array(func(*imb))
         if err is None:
             err = e
         else:
@@ -82,7 +86,8 @@ def run_epoch (stream, func, maxit, shape):
         pass
     return err / n
 
-def train (model, data, params, max_epoch, fold, batch):
+def train (model, data, out_path, max_epoch, fold, batch):
+    verbose = True
     streamer = DataH5PyStreamer(data, batch=batch, fold=fold)
     shape = streamer.shape
     logging.info('data shape is {}'.format(shape))
@@ -98,40 +103,30 @@ def train (model, data, params, max_epoch, fold, batch):
     net, loss, scores = model.network(input_var, label_var, shape)
 
     params = lasagne.layers.get_all_params(net, trainable=True)
-    #init0 = lasagne.layers.get_all_param_values(net)
-
     lr = theano.shared(lasagne.utils.floatX(3e-3))
 
     updates = lasagne.updates.adam(loss, params, learning_rate=lr)
 
     train_fn = theano.function([input_var, label_var], loss, updates=updates)
     test_fn = theano.function([input_var, label_var], scores)
-    #pred_fn = theano.function([input_var], output_det)
-    #for it in range(cv):
-    #    lasagne.layers.set_all_param_values(net,init0);
-
-    #    train_with_hdf5(net, streamer, num_epochs=max_epochs, train_fn = train_fn, test_fn=test_fn,
-                            #tr_transform=lambda x: du.segmenter_data_transform(x, shift=shi, rotate=rot, scale = sca, normalize_pctwise=pct_norm_tr),
-                            #te_transform=lambda x: du.segmenter_data_transform(x, normalize_pctwise=pct_norm,istest=True),
-    #                        save_best_params_to='fcn-{}-{}.npz'.format(model, it))
     best = None # (score, epoch, params)
-    tr_stream = data.train()
-    te_stream = data.test()
-    for epoch in range(num_epochs):
+    tr_stream = streamer.train()
+    te_stream = streamer.test()
+    for epoch in range(max_epoch):
         start = time.time()
-        tr_err = run_epoch(tr_stream.get_epoch_iterator(), train_fn, data.tr_size/data.batch, shape)
-        te_err = run_epoch(te_stream.get_epoch_iterator(), test_fn, data.te_size/data.batch, shape)
+        tr_err = run_epoch(tr_stream, train_fn, streamer.tr_size/batch, shape)
+        te_err = run_epoch(te_stream, test_fn, streamer.te_size/batch, shape)
         s = te_err[0]
         if best is None or s < best[0]:
-            best = (s, epoch, [np.copy(p) for p in (nn.layers.get_all_param_values(net))])
+            best = (s, epoch, [np.copy(p) for p in (lasagne.layers.get_all_param_values(net))])
             pass
         if verbose:
             print('ep {}/{} - tl {} - vl {} - t {:.3f}s'.format(
-                epoch, num_epochs, tr_err, te_err, time.time()-start))
+                epoch, max_epoch, tr_err, te_err, time.time()-start))
         pass
 
     print "save best epoch: {:d}".format(best[1])
-    save_params(best[2], params)
+    save_params(best[2], out_path)
     pass
 
 if __name__ == '__main__':
