@@ -74,7 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('image', nargs=1)
     parser.add_argument('label', nargs=1)
     parser.add_argument('--folds', default=3, type=int)
-    parser.add_argument('--resize', default=255, type=int)
+    parser.add_argument('--resize', default=256, type=int)
     parser.add_argument('--gray', default=False, action='store_true')
     parser.add_argument('--all', default=False, action='store_true')
     args = parser.parse_args()
