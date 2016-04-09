@@ -109,6 +109,7 @@ def train (model, data, out_path, max_epoch, fold, batch):
 
     train_fn = theano.function([input_var, label_var], loss, updates=updates)
     test_fn = theano.function([input_var, label_var], scores)
+
     best = None # (score, epoch, params)
     tr_stream = streamer.train()
     te_stream = streamer.test()
